@@ -648,8 +648,28 @@ def cmd_animate(args) -> int:
     return 0
 
 
+class KatParser(argparse.ArgumentParser):
+    """argparse, but it explains the mistakes people actually make."""
+
+    HINTS = {
+        "--yes": "only `paint` and `undo` take --yes; `preview` and `animate` "
+                 "never touch git, so there is nothing to confirm",
+        "--repo": "only `paint` and `undo` take --repo; `preview` and `animate` "
+                  "just render to the terminal",
+        "--multiplier": "--multiplier only applies to `paint` and `preview`",
+        "--mode": "--mode only applies to `animate`",
+    }
+
+    def error(self, message: str) -> None:
+        for flag, hint in self.HINTS.items():
+            if flag in message:
+                message = f"{message}\nhint: {hint}"
+                break
+        super().error(message)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = KatParser(
         prog="octokitti",
         description="gitfiti, but the only palette is octocats",
     )

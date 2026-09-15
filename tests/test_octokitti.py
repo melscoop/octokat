@@ -313,6 +313,33 @@ class CommitDateTests(unittest.TestCase):
         self.assertEqual(ok.commit_date(dt.date(2026, 9, 14)), "2026-09-14T12:00:00+00:00")
 
 
+class HintTests(unittest.TestCase):
+    """Wrong-command flags should explain themselves, not just fail."""
+
+    def _stderr_for(self, argv):
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer), self.assertRaises(SystemExit):
+            ok.main(argv)
+        return buffer.getvalue()
+
+    def test_yes_on_preview_explains_itself(self):
+        message = self._stderr_for(["preview", "octoface", "--yes"])
+        self.assertIn("unrecognized arguments: --yes", message)
+        self.assertIn("nothing to confirm", message)
+
+    def test_repo_on_preview_explains_itself(self):
+        self.assertIn("just render", self._stderr_for(["preview", "octoface", "--repo", "/tmp"]))
+
+    def test_mode_outside_animate_explains_itself(self):
+        self.assertIn("`animate`", self._stderr_for(["preview", "octoface", "--mode", "blink"]))
+
+    def test_unrelated_errors_get_no_hint(self):
+        self.assertNotIn("hint:", self._stderr_for(["preview", "octoface", "--nonsense"]))
+
+
 class CliTests(unittest.TestCase):
     def test_rejects_zero_multiplier(self):
         self.assertEqual(ok.main(["preview", "octoface", "--multiplier", "0"]), 2)

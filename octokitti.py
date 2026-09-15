@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import random
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -116,6 +117,42 @@ def available_kats() -> list[Kat]:
     return kats
 
 
+MODIFIERS = ("flip",)
+
+
+def flip_kat(kat: Kat) -> Kat:
+    """Mirror a kat horizontally so it faces the other way."""
+    return Kat(
+        name=f"{kat.name}:flip",
+        description=kat.description,
+        grid=[list(reversed(row)) for row in kat.grid],
+    )
+
+
+def resolve_kat_spec(spec: str) -> Kat:
+    """Resolve `name`, `name:flip`, `random`, or a path to a .kat file."""
+    if Path(spec).is_file():
+        return load_kat(spec)
+
+    name, *modifiers = spec.split(":")
+    if name == "random":
+        kats = available_kats()
+        if not kats:
+            raise OctokittiError(f"no kats found in {KAT_DIR}")
+        kat = random.choice(kats)
+    else:
+        kat = load_kat(name)
+
+    for modifier in modifiers:
+        if modifier not in MODIFIERS:
+            raise OctokittiError(
+                f"unknown modifier {modifier!r} in {spec!r} "
+                f"(supported: {', '.join(MODIFIERS)})"
+            )
+        kat = flip_kat(kat)
+    return kat
+
+
 def compose(kats: list[Kat], gap: int = 1) -> list[list[int]]:
     """Stitch kats side by side with `gap` blank columns between them."""
     if not kats:
@@ -192,6 +229,15 @@ def warn_about_dates(cells: list[Cell], today: dt.date) -> list[str]:
             f"art starts {first}, more than a year back - the graph only shows ~53 weeks"
         )
     return warnings
+
+
+def warn_about_width(width: int) -> list[str]:
+    if width > GRAPH_WEEKS:
+        return [
+            f"art is {width} weeks wide but the graph only shows ~{GRAPH_WEEKS} "
+            "- the left edge will be cut off"
+        ]
+    return []
 
 
 # --------------------------------------------------------------------------
@@ -368,9 +414,13 @@ def parse_date(value: str) -> dt.date:
         raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {value!r}") from exc
 
 
-def resolve_grid(names: list[str], gap: int) -> tuple[list[list[int]], str]:
-    kats = [load_kat(name) for name in names]
-    return compose(kats, gap=gap), "+".join(k.name for k in kats)
+def resolve_grid(specs: list[str], gap: int, repeat: int = 1) -> tuple[list[list[int]], str]:
+    kats = [resolve_kat_spec(spec) for spec in specs]
+    label = "+".join(k.name for k in kats)
+    if repeat > 1:
+        kats = kats * repeat
+        label = f"{label} x{repeat}"
+    return compose(kats, gap=gap), label
 
 
 def resolve_start(args, width: int, today: dt.date) -> tuple[dt.date, str | None]:
@@ -399,7 +449,7 @@ def cmd_list(args) -> int:
 
 
 def cmd_preview(args) -> int:
-    grid, label = resolve_grid(args.kats, args.gap)
+    grid, label = resolve_grid(args.kats, args.gap, args.repeat)
     today = dt.date.today()
     start, note = resolve_start(args, len(grid[0]), today)
     cells = plan_cells(grid, start, args.multiplier)
@@ -411,13 +461,13 @@ def cmd_preview(args) -> int:
     print(render(grid, start=start, color=supports_color(sys.stdout) and not args.ascii,
                  ascii_only=args.ascii))
     print()
-    for warning in warn_about_dates(cells, today):
+    for warning in warn_about_width(len(grid[0])) + warn_about_dates(cells, today):
         print(f"warning: {warning}")
     return 0
 
 
 def cmd_paint(args) -> int:
-    grid, label = resolve_grid(args.kats, args.gap)
+    grid, label = resolve_grid(args.kats, args.gap, args.repeat)
     today = dt.date.today()
     start, note = resolve_start(args, len(grid[0]), today)
     cells = plan_cells(grid, start, args.multiplier)
@@ -429,7 +479,7 @@ def cmd_paint(args) -> int:
     print()
     if note:
         print(f"note: {note}")
-    for warning in warn_about_dates(cells, today):
+    for warning in warn_about_width(len(grid[0])) + warn_about_dates(cells, today):
         print(f"warning: {warning}")
 
     print(f"\nrepo:    {repo}")
@@ -474,13 +524,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_art_args(sub):
-        sub.add_argument("kats", nargs="+", help="kat names, or paths to .kat files")
+        sub.add_argument("kats", nargs="+",
+                         help="kat names, 'random', 'name:flip', or paths to .kat files")
         sub.add_argument("--start", type=parse_date, metavar="YYYY-MM-DD",
                          help="first Sunday of the art (default: right-aligned to today)")
         sub.add_argument("--multiplier", type=int, default=1,
                          help="commits per shade level (default: 1)")
         sub.add_argument("--gap", type=int, default=1,
                          help="blank columns between kats (default: 1)")
+        sub.add_argument("--repeat", type=int, default=1,
+                         help="repeat the whole composition N times (default: 1)")
         sub.add_argument("--ascii", action="store_true", help="plain ASCII output")
 
     list_parser = subparsers.add_parser("list", help="show the available kats")
@@ -516,6 +569,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if getattr(args, "gap", 0) < 0:
         print("error: --gap cannot be negative", file=sys.stderr)
+        return 2
+    if getattr(args, "repeat", 1) < 1:
+        print("error: --repeat must be at least 1", file=sys.stderr)
         return 2
     try:
         return args.func(args)

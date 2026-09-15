@@ -68,6 +68,49 @@ class BundledKatTests(unittest.TestCase):
                 self.assertTrue(any(any(row) for row in kat.grid), "kat is blank")
 
 
+class SpecTests(unittest.TestCase):
+    def test_flip_mirrors_horizontally(self):
+        kat = ok.parse_kat("41.\n...\n...\n...\n...\n...\n...\n", "arrow")
+        self.assertEqual(ok.flip_kat(kat).grid[0], [0, 1, 4])
+
+    def test_flip_twice_is_identity(self):
+        kat = ok.parse_kat(SAMPLE, "sample")
+        self.assertEqual(ok.flip_kat(ok.flip_kat(kat)).grid, kat.grid)
+
+    def test_flip_records_itself_in_the_name(self):
+        self.assertEqual(ok.resolve_kat_spec("octoface:flip").name, "octoface:flip")
+
+    def test_spec_resolves_plain_name(self):
+        self.assertEqual(ok.resolve_kat_spec("octoface").name, "octoface")
+
+    def test_spec_flip_matches_manual_flip(self):
+        self.assertEqual(
+            ok.resolve_kat_spec("octoface:flip").grid,
+            ok.flip_kat(ok.load_kat("octoface")).grid,
+        )
+
+    def test_random_picks_a_bundled_kat(self):
+        names = {k.name for k in ok.available_kats()}
+        self.assertIn(ok.resolve_kat_spec("random").name, names)
+
+    def test_rejects_unknown_modifier(self):
+        with self.assertRaises(ok.OctokittiError):
+            ok.resolve_kat_spec("octoface:spin")
+
+
+class ResolveGridTests(unittest.TestCase):
+    def test_repeat_multiplies_width_and_labels(self):
+        single, label = ok.resolve_grid(["kitten"], gap=1, repeat=1)
+        tripled, tripled_label = ok.resolve_grid(["kitten"], gap=1, repeat=3)
+        self.assertEqual(len(tripled[0]), len(single[0]) * 3 + 2)
+        self.assertEqual(label, "kitten")
+        self.assertEqual(tripled_label, "kitten x3")
+
+    def test_label_joins_multiple_kats(self):
+        _, label = ok.resolve_grid(["kitten", "heart:flip"], gap=1)
+        self.assertEqual(label, "kitten+heart:flip")
+
+
 class ComposeTests(unittest.TestCase):
     def test_gap_columns_are_inserted_between_kats(self):
         kat = ok.parse_kat(SAMPLE, "sample")
@@ -157,6 +200,10 @@ class WarningTests(unittest.TestCase):
         cells = ok.plan_cells(self.grid, ok.default_start(2, today), 1)
         self.assertEqual(ok.warn_about_dates(cells, today), [])
 
+    def test_warns_when_art_is_wider_than_the_graph(self):
+        self.assertTrue(ok.warn_about_width(ok.GRAPH_WEEKS + 1))
+        self.assertEqual(ok.warn_about_width(ok.GRAPH_WEEKS), [])
+
 
 class RenderTests(unittest.TestCase):
     def setUp(self):
@@ -192,6 +239,12 @@ class CliTests(unittest.TestCase):
 
     def test_rejects_negative_gap(self):
         self.assertEqual(ok.main(["preview", "octoface", "--gap", "-1"]), 2)
+
+    def test_rejects_zero_repeat(self):
+        self.assertEqual(ok.main(["preview", "octoface", "--repeat", "0"]), 2)
+
+    def test_reports_unknown_modifier_as_an_error(self):
+        self.assertEqual(ok.main(["preview", "octoface:spin", "--ascii"]), 1)
 
     def test_rejects_bad_date(self):
         with self.assertRaises(SystemExit):

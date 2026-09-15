@@ -1,7 +1,7 @@
 # octokat
 Meow
 
-🐙🐱 **[octokitti](OCTOKITTI.md)** — gitfiti, but the only palette is octocats. Paint the contribution graph with `python3 octokitti.py list`.
+🐙🐱 **[octokitti](OCTOKITTI.md)** — gitfiti, but the only palette is octocats. Fourteen kats, paintable onto your contribution graph. Try `python3 octokitti.py animate`.
 
                                                                                                                                                                                                         
                                                                                                                                                                                                         

@@ -228,6 +228,86 @@ class RenderTests(unittest.TestCase):
         self.assertIn("\033", ok.render(self.kat.grid, color=True))
 
 
+class AnimationTests(unittest.TestCase):
+    def setUp(self):
+        self.kat = ok.parse_kat(SAMPLE, "sample")
+        self.grid = self.kat.grid
+
+    def test_pad_centres_a_narrow_grid(self):
+        padded = ok.pad_to_width(self.grid, 7)
+        self.assertEqual(len(padded[0]), 7)
+        self.assertEqual(padded[0], [0, 0, 0, 4, 0, 0, 0])
+
+    def test_pad_crops_a_wide_grid(self):
+        self.assertEqual(len(ok.pad_to_width(self.grid, 2)[0]), 2)
+
+    def test_reveal_starts_blank_and_ends_complete(self):
+        frames = ok.reveal_frames(self.grid, "sample", hold=3)
+        self.assertEqual(len(frames), self.kat.width + 1 + 3)
+        self.assertTrue(all(not any(row) for row in frames[0][0]))
+        self.assertEqual(frames[-1][0], self.grid)
+
+    def test_reveal_uncovers_one_week_at_a_time(self):
+        frames = ok.reveal_frames(self.grid, "sample", hold=0)
+        for cols, (frame, _) in enumerate(frames):
+            with self.subTest(cols=cols):
+                lit = {c for row in frame for c, v in enumerate(row) if v}
+                self.assertTrue(all(c < cols for c in lit))
+
+    def test_reveal_caption_counts_weeks(self):
+        frames = ok.reveal_frames(self.grid, "sample", hold=0)
+        self.assertIn(f"week 0/{self.kat.width}", frames[0][1])
+        self.assertIn(f"week {self.kat.width}/{self.kat.width}", frames[-1][1])
+
+    def test_blink_shuts_the_eyes(self):
+        eyed = ok.load_kat("octoface")
+        frames = ok.blink_frames(eyed.grid, "octoface")
+        shut = [f for f, _ in frames if not any(1 in row for row in f)]
+        self.assertTrue(shut, "no blink frame produced")
+        self.assertTrue(any(1 in row for row in eyed.grid), "test kat has no eyes")
+
+    def test_blink_leaves_the_body_alone(self):
+        eyed = ok.load_kat("octoface")
+        shut = next(f for f, _ in ok.blink_frames(eyed.grid, "x")
+                    if not any(1 in row for row in f))
+        for original, blinked in zip(eyed.grid, shut):
+            for before, after in zip(original, blinked):
+                self.assertEqual(after, ok.MAX_LEVEL if before == 1 else before)
+
+    def test_parade_shows_every_kat_at_one_width(self):
+        kats = ok.available_kats()
+        frames = ok.parade_frames(kats, hold=2)
+        self.assertEqual(len(frames), len(kats) * 2)
+        widths = {len(frame[0]) for frame, _ in frames}
+        self.assertEqual(widths, {max(k.width for k in kats)})
+
+    def test_parade_captions_name_the_kat(self):
+        kats = ok.available_kats()
+        captions = " ".join(caption for _, caption in ok.parade_frames(kats, hold=1))
+        for kat in kats:
+            self.assertIn(kat.name, captions)
+
+    def test_fit_crops_only_when_needed(self):
+        wide = [[4] * 40 for _ in range(ok.ROWS)]
+        cropped, was_cropped = ok.fit_to_terminal(wide, 40)
+        self.assertTrue(was_cropped)
+        self.assertEqual(len(cropped[0]), 17)
+        roomy, untouched = ok.fit_to_terminal(wide, 200)
+        self.assertFalse(untouched)
+        self.assertEqual(roomy, wide)
+
+    def test_play_on_a_non_tty_writes_one_final_frame(self):
+        import io
+
+        stream = io.StringIO()
+        frames = ok.reveal_frames(self.grid, "sample", hold=0)
+        ok.play(frames, fps=1000, loops=1, color=False, ascii_only=True, stream=stream)
+        output = stream.getvalue()
+        self.assertEqual(len(output.splitlines()), ok.ROWS + 1)
+        self.assertNotIn("\033", output)
+        self.assertIn("sample", output)
+
+
 class CommitDateTests(unittest.TestCase):
     def test_uses_noon_utc(self):
         self.assertEqual(ok.commit_date(dt.date(2026, 9, 14)), "2026-09-14T12:00:00+00:00")
@@ -245,6 +325,18 @@ class CliTests(unittest.TestCase):
 
     def test_reports_unknown_modifier_as_an_error(self):
         self.assertEqual(ok.main(["preview", "octoface:spin", "--ascii"]), 1)
+
+    def test_rejects_zero_fps(self):
+        self.assertEqual(ok.main(["animate", "octoface", "--fps", "0"]), 2)
+
+    def test_rejects_negative_loops(self):
+        self.assertEqual(ok.main(["animate", "octoface", "--loops", "-1"]), 2)
+
+    def test_animate_runs_headless(self):
+        self.assertEqual(ok.main(["animate", "kitten", "--loops", "1", "--ascii"]), 0)
+
+    def test_animate_parade_needs_no_arguments(self):
+        self.assertEqual(ok.main(["animate", "--loops", "1", "--ascii"]), 0)
 
     def test_rejects_bad_date(self):
         with self.assertRaises(SystemExit):

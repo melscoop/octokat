@@ -19,8 +19,10 @@ import datetime as dt
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -288,6 +290,110 @@ def supports_color(stream) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Animation
+# --------------------------------------------------------------------------
+
+ANIM_MODES = ("fill", "blink", "parade")
+CURSOR_HIDE = "\033[?25l"
+CURSOR_SHOW = "\033[?25h"
+CLEAR_LINE = "\033[K"
+
+
+def pad_to_width(grid: list[list[int]], width: int) -> list[list[int]]:
+    """Centre a grid in `width` columns, cropping if it is already wider."""
+    current = len(grid[0])
+    if current >= width:
+        return [row[:width] for row in grid]
+    left = (width - current) // 2
+    right = width - current - left
+    return [[0] * left + list(row) + [0] * right for row in grid]
+
+
+def reveal_frames(grid: list[list[int]], label: str, hold: int = 8) -> list:
+    """Paint the art on week by week, the way `paint` actually commits it."""
+    width = len(grid[0])
+    frames = []
+    for cols in range(width + 1):
+        revealed = [
+            [value if index < cols else 0 for index, value in enumerate(row)]
+            for row in grid
+        ]
+        frames.append((revealed, f"{label}  week {cols}/{width}"))
+    frames.extend([(grid, f"{label}  week {width}/{width}")] * hold)
+    return frames
+
+
+def blink_frames(grid: list[list[int]], label: str, open_hold: int = 12) -> list:
+    """Eyes are the level-1 pixels, so darkening them to body shade is a blink."""
+    shut = [[MAX_LEVEL if value == 1 else value for value in row] for row in grid]
+    caption_open = f"{label}  *blink*"
+    return (
+        [(grid, label)] * open_hold
+        + [(shut, caption_open)] * 2
+        + [(grid, label)] * 4
+        + [(shut, caption_open)] * 2
+    )
+
+
+def parade_frames(kats: list[Kat], hold: int = 12) -> list:
+    """One kat at a time, centred, like a little cat show."""
+    width = max(kat.width for kat in kats)
+    frames = []
+    for kat in kats:
+        caption = f"{kat.name}  -  {kat.description}"
+        frames.extend([(pad_to_width(kat.grid, width), caption)] * hold)
+    return frames
+
+
+def terminal_columns(stream=sys.stdout) -> int:
+    try:
+        return shutil.get_terminal_size().columns
+    except OSError:
+        return 80
+
+
+def fit_to_terminal(grid: list[list[int]], columns: int) -> tuple[list[list[int]], bool]:
+    """Crop the art so a frame never wraps - wrapping corrupts the redraw."""
+    usable = max(1, (columns - 6) // 2)
+    if len(grid[0]) <= usable:
+        return grid, False
+    return [row[:usable] for row in grid], True
+
+
+def play(frames, fps: float, loops: int, color: bool, ascii_only: bool,
+         stream=sys.stdout) -> None:
+    """Redraw frames in place. Non-interactive streams just get the last one."""
+    if not (hasattr(stream, "isatty") and stream.isatty()):
+        grid, caption = frames[-1]
+        stream.write(render(grid, color=False, ascii_only=ascii_only) + "\n")
+        stream.write(caption + "\n")
+        return
+
+    height = ROWS + 1
+    delay = 1.0 / fps
+    stream.write(CURSOR_HIDE)
+    first = True
+    try:
+        loop = 0
+        while loops == 0 or loop < loops:
+            for grid, caption in frames:
+                if not first:
+                    stream.write(f"\033[{height}A")
+                first = False
+                for line in render(grid, color=color, ascii_only=ascii_only).splitlines():
+                    stream.write(f"{line}{CLEAR_LINE}\n")
+                stream.write(f"{caption}{CLEAR_LINE}\n")
+                stream.flush()
+                time.sleep(delay)
+            loop += 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stream.write(CURSOR_SHOW)
+        stream.flush()
+
+
+# --------------------------------------------------------------------------
 # Git plumbing
 # --------------------------------------------------------------------------
 
@@ -516,6 +622,32 @@ def cmd_undo(args) -> int:
     return 0
 
 
+def cmd_animate(args) -> int:
+    specs = args.kats or [kat.name for kat in available_kats()]
+    if not specs:
+        raise OctokittiError(f"no kats found in {KAT_DIR}")
+
+    mode = args.mode or ("fill" if args.kats else "parade")
+    kats = [resolve_kat_spec(spec) for spec in specs]
+    color = supports_color(sys.stdout) and not args.ascii
+
+    if mode == "parade":
+        frames = parade_frames(kats, hold=max(1, round(args.fps)))
+    else:
+        label = "+".join(kat.name for kat in kats)
+        grid, cropped = fit_to_terminal(
+            compose(kats, gap=args.gap), terminal_columns()
+        )
+        if cropped:
+            print(f"note: terminal is narrow, showing the first {len(grid[0])} weeks")
+        frames = (
+            reveal_frames(grid, label) if mode == "fill" else blink_frames(grid, label)
+        )
+
+    play(frames, fps=args.fps, loops=args.loops, color=color, ascii_only=args.ascii)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="octokitti",
@@ -552,6 +684,25 @@ def build_parser() -> argparse.ArgumentParser:
                               help="actually commit (otherwise dry run)")
     paint_parser.set_defaults(func=cmd_paint)
 
+    animate_parser = subparsers.add_parser(
+        "animate", help="play the art in the terminal")
+    animate_parser.add_argument(
+        "kats", nargs="*",
+        help="kat specs (default: the whole litter, as a parade)")
+    animate_parser.add_argument(
+        "--mode", choices=ANIM_MODES, default=None,
+        help="fill: reveal week by week; blink: eyes blink; parade: one at a time "
+             "(default: fill, or parade when no kats are named)")
+    animate_parser.add_argument("--fps", type=float, default=12.0,
+                                help="frames per second (default: 12)")
+    animate_parser.add_argument("--loops", type=int, default=3,
+                                help="times to repeat, 0 for forever (default: 3)")
+    animate_parser.add_argument("--gap", type=int, default=1,
+                                help="blank columns between kats (default: 1)")
+    animate_parser.add_argument("--ascii", action="store_true",
+                                help="plain ASCII output")
+    animate_parser.set_defaults(func=cmd_animate)
+
     undo_parser = subparsers.add_parser("undo", help="remove the last painted commits")
     undo_parser.add_argument("--repo", required=True, help="path to the painted repo")
     undo_parser.add_argument("--yes", action="store_true", help="actually reset")
@@ -572,6 +723,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if getattr(args, "repeat", 1) < 1:
         print("error: --repeat must be at least 1", file=sys.stderr)
+        return 2
+    if getattr(args, "fps", 1) <= 0:
+        print("error: --fps must be greater than zero", file=sys.stderr)
+        return 2
+    if getattr(args, "loops", 0) < 0:
+        print("error: --loops cannot be negative", file=sys.stderr)
         return 2
     try:
         return args.func(args)

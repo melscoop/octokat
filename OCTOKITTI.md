@@ -41,6 +41,32 @@ python3 octokitti.py paint octoface --repo ../kat-canvas --yes
 python3 octokitti.py undo --repo ../kat-canvas --yes
 ```
 
+## Watch it move
+
+`animate` plays the art in your terminal, redrawing in place.
+
+```sh
+# paint it on, week by week, the way `paint` actually commits it
+python3 octokitti.py animate octoface
+
+# blink
+python3 octokitti.py animate loaf --mode blink --loops 0
+
+# a parade of the whole litter, one kat at a time
+python3 octokitti.py animate
+```
+
+| mode | what happens |
+| --- | --- |
+| `fill` | The art reveals one week per frame, with a running week counter. Default when you name a kat. |
+| `blink` | The kat sits there and blinks. Eyes are the level-1 pixels, so darkening them to body shade closes them. |
+| `parade` | Every named kat in turn, centred, captioned. Default when you name none. |
+
+`--fps` sets the speed (default 12), `--loops 0` runs until you hit `Ctrl-C`.
+Frames are cropped to your terminal width, because a wrapped frame corrupts the
+redraw. Piping the output somewhere non-interactive just prints the final frame,
+so it stays safe in scripts.
+
 Then `git push` the canvas repo to GitHub. The graph counts commits in **public**
 repos (or private ones, if you enable *Private contributions* in your profile
 settings), and the commit author email must match one on your GitHub account.
@@ -127,6 +153,9 @@ Rows may be ragged — short rows are padded with blanks on the right.
 | `--multiplier N` | `1` | Commits per shade level. Raise it if your real commits drown out the kat. |
 | `--gap N` | `1` | Blank columns between kats. |
 | `--repeat N` | `1` | Repeat the whole composition N times. |
+| `--mode` | `fill` / `parade` | For `animate`: `fill`, `blink` or `parade`. |
+| `--fps N` | `12` | For `animate`: frames per second. |
+| `--loops N` | `3` | For `animate`: times to repeat, `0` for forever. |
 | `--ascii` | off | Plain ASCII instead of colour blocks. |
 | `--repo PATH` | required for `paint`/`undo` | Which repo to scribble in. |
 | `--yes` | off | Actually do the thing. Without it, everything is a dry run. |

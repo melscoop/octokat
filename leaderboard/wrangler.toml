@@ -1,0 +1,37 @@
+# Purrfect Match 64 global leaderboard: a Cloudflare Worker + D1 database.
+# Deploy from this folder with `wrangler deploy`. The build step copies the
+# game engine out of ../purrfect-match/index.html so scores are replayed with
+# the exact rules the game uses; redeploy whenever that engine changes.
+
+name = "purrfect-match-scores"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[build]
+command = "node build-engine.mjs"
+watch_dir = "../purrfect-match"
+
+# Per-IP rate limits (requests per 60 seconds).
+[[ratelimits]]
+name = "RL_SEEDS"
+namespace_id = "7101"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "RL_POSTS"
+namespace_id = "7102"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "RL_READS"
+namespace_id = "7103"
+simple = { limit = 60, period = 60 }
+
+# SEED_SECRET signs board tickets. Set it with `wrangler secret put SEED_SECRET`,
+# and put one in .dev.vars for `wrangler dev`.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "purrfect-match-scores"
+database_id = "696ab6b4-ba48-47df-b320-d950b1e6a624"

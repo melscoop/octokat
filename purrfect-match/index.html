@@ -912,7 +912,7 @@
 
   // Everything is drawn on a tiny 180x320 canvas and scaled up with
   // nearest-neighbour, so every kitty is honest pixel art.
-  const W = 180, H = 320, TILE = 20, BX = 10, BY = 76;
+  const W = 180, H = 320, TILE = 20, BX = 10, BY = 88;
   const REDUCED = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
 
   // ============================================================== palette
@@ -1229,6 +1229,8 @@
     sparkS: ['.w.', 'w.w', '.w.'],
     paw: ['.p.p.', 'p...p', '.ppp.', 'ppppp', '.ppp.'],
     lock: ['.kkk.', 'k...k', 'kkkkk', 'kk.kk', 'kkkkk'],
+    miniKitty: ['o.....o', 'oo...oo', 'obbbbbo', 'obkbkbo', 'obbbbbo', '.ooooo.'],
+    miniBox: ['.e...e.', 'ooooooo', 'obbbbbo', 'obbpbbo', 'obbbbbo', 'ooooooo'],
     move: ['.pp.', 'pppp', 'pppp', '.pp.'],
   };
   function iconCanvas(name, map) {
@@ -1362,7 +1364,9 @@
       SPR.icons['spark' + col] = iconCanvas('spark', { w: col });
       SPR.icons['sparkS' + col] = iconCanvas('sparkS', { w: col });
     }
+    SPR.icons.miniBox = iconCanvas('miniBox', { e: '#a39bb8', o: '#8a552a', b: '#e3aa6b', p: '#ff7aa8' });
     KITTIES.forEach((pal, i) => {
+      SPR.icons['mini' + i] = iconCanvas('miniKitty', { o: pal.o, b: pal.b, k: C.eye });
       SPR.icons['heart' + i] = iconCanvas('heartS', { h: pal.s });
       SPR.icons['paw' + i] = iconCanvas('paw', { p: pal.o });
     });
@@ -1385,7 +1389,7 @@
   // ============================================================== storage
   const SAVE_KEY = 'purrfect-match-64';
   const save = (() => {
-    const d = { unlocked: 1, stars: {}, best: {}, cozyBest: 0, music: true, sfx: true, seen: {} };
+    const d = { unlocked: 1, stars: {}, best: {}, cozyBest: 0, music: true, sfx: true, seen: {}, player: '', name: '', named: false, posted: {}, pending: {}, seeds: {} };
     try {
       return Object.assign(d, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}'));
     } catch (e) {
@@ -1963,11 +1967,19 @@
         new Button(45, 186, 90, 26, 'PLAY', () => go(new MapScene()), { style: 'pink', scale: 2 }),
         new Button(45, 218, 90, 20, 'COZY MODE', () => go(new PlayScene(-1)), { style: 'mint' }),
         new Button(45, 243, 90, 20, 'HOW TO PLAY', () => go(new HowToScene(() => new TitleScene())), { style: 'sky' }),
+        new Button(45, 268, 90, 20, 'HIGH SCORES', () => go(new ScoresScene(null, () => new TitleScene())), { style: 'gold' }),
         ...soundButtons(W - 48, H - 24),
       ];
+      this.refreshT = 0;
+      if (Board.enabled && Date.now() - Board.overallAt > 30000) Board.get(null, true);
     }
     update(dt) {
       this.t += dt;
+      this.refreshT += dt;
+      if (this.refreshT > 60) {
+        this.refreshT = 0;
+        Board.get(null, true);
+      }
       if (Math.random() < dt * 1.6) this.rain.push({ x: Math.random() * (W + 20) - 10, y: -14, vy: 8 + Math.random() * 10, k: Math.floor(Math.random() * 6), ph: Math.random() * 9 });
       for (const f of this.rain) f.y += f.vy * dt;
       this.rain = this.rain.filter((f) => f.y < H + 14);
@@ -1987,6 +1999,7 @@
         blit(SPR.kitty[i][ex], 32 + i * 23, 138 - Math.round(hop));
       }
       rrect(20, 150, 140, 5, '#ffd3e4', '#f0a9c6');
+      drawTicker(164);
       drawButtons(this);
       drawText(ctx, 'BEST COZY SCORE ' + save.cozyBest, 6, H - 16, C.inkSoft);
       drawText(ctx, 'MADE WITH ♥', 6, H - 9, C.inkSoft);
@@ -2003,10 +2016,16 @@
     constructor() {
       this.name = 'map';
       this.t = 0;
-      this.buttons = [new Button(4, 4, 30, 17, '<', () => go(new TitleScene()), { style: 'cream', scale: 2 })];
+      this.buttons = [
+        new Button(4, 4, 30, 17, '<', () => go(new TitleScene()), { style: 'cream', scale: 2 }),
+        new Button(136, 4, 40, 17, '', () => go(new ScoresScene(this.current, () => new MapScene())), {
+          style: 'gold', label: 'TOP', icon: (cx, cy, st) => { blit(crownIcon(), cx - 9, cy - 1); drawText(ctx, 'TOP', cx + 4, cy - 2, st.text, { align: 'center' }); },
+        }),
+      ];
       const cols = 4, bw = 36, bh = 40, gx = 6, gy = 6;
       const x0 = Math.round((W - (cols * bw + (cols - 1) * gx)) / 2), y0 = 36;
       this.current = Math.min(E.LEVELS.length - 1, save.unlocked - 1);
+      Board.refillSeeds();
       for (let i = 0; i < E.LEVELS.length; i++) {
         const locked = i + 1 > save.unlocked;
         const r = Math.floor(i / cols), c = i % cols;
@@ -2017,7 +2036,7 @@
         });
         this.buttons.push(b);
       }
-      this.focusBtn = this.buttons[this.current + 1];
+      this.focusBtn = this.buttons[this.current + 2];
     }
     drawLevel(i, b, cx, cy, st, locked) {
       if (locked) {
@@ -2032,9 +2051,9 @@
     update(dt) { this.t += dt; }
     draw() {
       drawSceneBg();
-      drawText(ctx, 'PICK A LEVEL', W / 2 + 12, 8, C.white, { scale: 2, align: 'center', outline: C.ink });
+      drawText(ctx, 'LEVELS', 85, 8, C.white, { scale: 2, align: 'center', outline: C.ink });
       drawButtons(this);
-      const cur = this.buttons[this.current + 1];
+      const cur = this.buttons[this.current + 2];
       if (cur && !cur.disabled) {
         const hop = REDUCED ? 0 : Math.round(Math.abs(Math.sin(this.t * 3)) * 3);
         blit(SPR.mascot[(this.t % 3) < 0.15 ? 'blink' : 'open'], cur.x + cur.w - 3, cur.y - 2 - hop);
@@ -2198,6 +2217,426 @@
     }
   }
 
+  // =========================================================== leaderboard
+  // The global leaderboard is a Cloudflare Worker (see leaderboard/). Scores
+  // are never sent as plain numbers: the game sends its seed and its moves,
+  // and the Worker replays them with this same engine to get the real score.
+  const PARAMS = new URLSearchParams(location.search);
+  const API = (() => {
+    const local = PARAMS.get('api');
+    if (local && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(local)) return local;
+    return 'https://purrfect-match-scores.melanie-stewart.workers.dev';
+  })();
+  const NAME_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  // Keep in step with BLOCKED in leaderboard/src/api.js.
+  const BLOCKED_NAMES = new Set([
+    'ASS', 'CNT', 'COK', 'CUM', 'DIK', 'DIX', 'FAG', 'FCK', 'FUC', 'FUK', 'JIZ', 'KKK',
+    'KYS', 'NAZ', 'NGR', 'NIG', 'PUS', 'SEX', 'SHT', 'TIT', 'VAG', 'WTF', 'XXX',
+  ]);
+  const CUTE_NAMES = ['CAT', 'MEW', 'PAW', 'PUR', 'NYA', 'KIT', 'FUR', 'MAO', 'TUX', 'MOG', 'PIP', 'BOO'];
+
+  // Must match fnv1a() in leaderboard/build-engine.mjs.
+  function engineVersion() {
+    const src = (document.getElementById('purr-engine').textContent || '').replace(/\r\n/g, '\n');
+    let h = 0x811c9dc5;
+    for (let i = 0; i < src.length; i++) {
+      h ^= src.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+  }
+  const ENGINE_V = engineVersion();
+
+  if (!/^[a-f0-9]{16}$/.test(save.player || '')) {
+    const bytes = new Uint8Array(8);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+    else for (let i = 0; i < 8; i++) bytes[i] = Math.floor(Math.random() * 256);
+    save.player = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    persist();
+  }
+  if (!/^[A-Z0-9]{3}$/.test(save.name || '')) {
+    save.name = CUTE_NAMES[Math.floor(Math.random() * CUTE_NAMES.length)];
+    persist();
+  }
+
+  // A ticket needs time left to be posted, even after an offline game.
+  const ticketFresh = (t) => !!t && t.exp > Date.now() + 3600e3;
+
+  const Board = {
+    enabled: PARAMS.get('board') !== 'off',
+    status: 'idle',
+    overall: null,
+    overallAt: 0,
+    me: null,
+    levels: {},
+    queue: Promise.resolve(),
+    async call(path, body) {
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = setTimeout(() => ctl && ctl.abort(), 8000);
+      try {
+        const init = body
+          ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+          : { method: 'GET' };
+        if (ctl) init.signal = ctl.signal;
+        const res = await fetch(API + path, init);
+        let data = null;
+        try { data = await res.json(); } catch (err) { data = null; }
+        return { status: res.status, data };
+      } catch (err) {
+        return { status: 0, data: null };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    remember(data, level) {
+      if (data.overall) {
+        this.overall = data.overall;
+        this.overallAt = Date.now();
+      }
+      if (data.me) this.me = data.me;
+      if (level != null && data.level) this.levels[level] = { top: data.level.top, me: data.me || {}, at: Date.now() };
+    },
+    async get(level, anon) {
+      if (!this.enabled) return { state: 'off' };
+      this.status = 'loading';
+      const q = [];
+      if (!anon) q.push('player=' + save.player);
+      if (level != null) q.push('level=' + level);
+      const res = await this.call('/v1/boards' + (q.length ? '?' + q.join('&') : ''));
+      if (res.status === 200 && res.data && res.data.ok) {
+        this.status = 'ok';
+        this.remember(res.data, level);
+        return { state: 'done', data: res.data };
+      }
+      this.status = res.status === 0 ? 'offline' : 'error';
+      return { state: this.status, message: 'THE BOARD IS NAPPING. TRY AGAIN SOON.' };
+    },
+    // Ranked games are played on a board ticket from the Worker: a signed seed
+    // for one level, good for one post. One spare ticket per level is kept,
+    // so the next game can start (even offline) and still count.
+    refillSeeds() {
+      if (!this.enabled) return Promise.resolve();
+      if (this.refillP) {
+        this.refillAgain = true;
+        return this.refillP;
+      }
+      const need = [];
+      for (let i = 0; i < E.LEVELS.length; i++) if (!ticketFresh(save.seeds[i])) need.push(i);
+      if (!need.length) return Promise.resolve();
+      this.refillP = this.call('/v1/seeds?player=' + save.player + '&levels=' + need.join(','))
+        .then((res) => {
+          if (res.status === 200 && res.data && res.data.ok) {
+            for (const t of res.data.seeds) save.seeds[t.level] = t;
+            persist();
+          } else if (!this.retryTimer) {
+            this.retryTimer = setTimeout(() => {
+              this.retryTimer = 0;
+              this.refillSeeds();
+            }, 60000);
+          }
+        })
+        .finally(() => {
+          this.refillP = null;
+          if (this.refillAgain) {
+            this.refillAgain = false;
+            this.refillSeeds();
+          }
+        });
+      return this.refillP;
+    },
+    takeSeed(level) {
+      if (!this.enabled) return null;
+      const t = save.seeds[level];
+      const ok = ticketFresh(t);
+      if (ok) {
+        delete save.seeds[level];
+        persist();
+      }
+      this.refillSeeds();
+      return ok ? t : null;
+    },
+    // Scores wait in save.pending until the Worker has them, so a win made
+    // offline gets posted the next time the game can reach the board.
+    submit(level) {
+      this.queue = this.queue.then(() => this.send(level));
+      return this.queue;
+    },
+    async send(level) {
+      if (!this.enabled) return { state: 'off' };
+      const p = save.pending[level];
+      if (!p) return { state: 'none' };
+      if (p.v !== ENGINE_V) {
+        delete save.pending[level];
+        persist();
+        return { state: 'error', message: 'THE GAME WAS UPDATED. PLAY AGAIN TO POST.' };
+      }
+      const res = await this.call('/v1/scores', { v: p.v, player: save.player, name: save.name, level, seed: p.seed, exp: p.exp, sig: p.sig, moves: p.moves });
+      if (res.status === 0 || res.status === 429 || res.status >= 500) {
+        this.status = 'offline';
+        return { state: 'offline' };
+      }
+      if (res.status === 409 && res.data && res.data.error === 'version') return { state: 'error', message: 'THE GAME WAS UPDATED. REFRESH THE PAGE TO POST.' };
+      delete save.pending[level];
+      if (res.status === 200 && res.data && res.data.ok) {
+        save.posted[level] = Math.max(save.posted[level] || 0, res.data.score);
+        persist();
+        this.status = 'ok';
+        this.remember(res.data, level);
+        return { state: 'done', data: res.data };
+      }
+      persist();
+      return { state: 'error', message: String((res.data && res.data.message) || 'THAT SCORE COULD NOT BE POSTED.').toUpperCase() };
+    },
+    flush() {
+      for (const lv of Object.keys(save.pending)) this.submit(Number(lv));
+      return this.queue;
+    },
+    rename(name) {
+      this.queue = this.queue.then(async () => {
+        if (!this.enabled) return;
+        const res = await this.call('/v1/name', { player: save.player, name });
+        if (res.status !== 200) return;
+        const fix = (rows) => (rows || []).forEach((r) => { if (r.me) r.name = name; });
+        fix(this.overall);
+        for (const k of Object.keys(this.levels)) fix(this.levels[k].top);
+      });
+      return this.queue;
+    },
+  };
+
+  function setName(name) {
+    save.name = name;
+    save.named = true;
+    persist();
+    Board.rename(name);
+  }
+
+  const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'TH' : ['TH', 'ST', 'ND', 'RD'][n % 10] || 'TH');
+  const crownIcon = () => lazyIcon('crown', ['k.k.k', 'kykyk', 'kyyyk', 'kkkkk'], { k: '#8a5a00', y: C.gold });
+  const arrowIcon = (up, col) => lazyIcon('arrow' + up + col, up ? ['..k..', '.kkk.', 'kkkkk'] : ['kkkkk', '.kkk.', '..k..'], { k: col });
+
+  // Arcade-style initials: three slots, up/down to change, or just type.
+  class InitialsPicker {
+    constructor(current, onDone, onCancel, title) {
+      this.letters = (current || 'CAT').split('').slice(0, 3);
+      this.slot = 0;
+      this.onDone = onDone;
+      this.title = title || 'ENTER YOUR INITIALS';
+      this.error = null;
+      this.t0 = clock.rt;
+      this.buttons = [];
+      for (let i = 0; i < 3; i++) {
+        const cx = 60 + i * 30;
+        this.buttons.push(new Button(cx - 11, 110, 22, 14, '', () => this.bump(i, 1), { label: 'UP', icon: (x, y, st) => blit(arrowIcon(1, st.text), x, y) }));
+        this.buttons.push(new Button(cx - 11, 164, 22, 14, '', () => this.bump(i, -1), { label: 'DOWN', icon: (x, y, st) => blit(arrowIcon(0, st.text), x, y) }));
+      }
+      this.buttons.push(new Button(onCancel ? 94 : 50, 188, onCancel ? 58 : 80, 22, 'OK!', () => this.confirm(), { style: 'pink', scale: 2 }));
+      if (onCancel) this.buttons.push(new Button(28, 188, 58, 22, 'CANCEL', onCancel, { style: 'cream' }));
+      this.focusBtn = this.buttons[6];
+    }
+    bump(i, d) {
+      const at = NAME_CHARS.indexOf(this.letters[i]);
+      this.letters[i] = NAME_CHARS[(at + d + NAME_CHARS.length) % NAME_CHARS.length];
+      this.slot = i;
+      this.error = null;
+    }
+    confirm() {
+      const name = this.letters.join('');
+      if (BLOCKED_NAMES.has(name)) {
+        this.error = 'PICK SOME OTHER LETTERS!';
+        Sound.sfx.bad();
+        return;
+      }
+      this.onDone(name);
+    }
+    down(x, y) { buttonsDown(this.buttons, x, y); }
+    up(x, y) { buttonsUp(this.buttons, x, y); }
+    key(k) {
+      if (/^[a-z0-9]$/i.test(k)) {
+        this.letters[this.slot] = k.toUpperCase();
+        this.slot = Math.min(2, this.slot + 1);
+        this.error = null;
+        Sound.sfx.select();
+      } else if (k === 'ArrowUp') this.bump(this.slot, 1);
+      else if (k === 'ArrowDown') this.bump(this.slot, -1);
+      else if (k === 'ArrowLeft' || k === 'Backspace') this.slot = Math.max(0, this.slot - 1);
+      else if (k === 'ArrowRight') this.slot = Math.min(2, this.slot + 1);
+      else if (k === 'Enter') this.confirm();
+      else if (k === 'Escape') {
+        const cancel = this.buttons[7];
+        if (cancel) cancel.onTap();
+      } else return false;
+      return true;
+    }
+    draw() {
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = C.ink;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+      rrect(18, 70, 144, 150, C.paper, '#c7799c', { hi: C.white, shadow: '#b0668a' });
+      const lines = wrap(this.title, 130);
+      lines.forEach((ln, i) => drawText(ctx, ln, W / 2, 78 + i * 8, C.hot, { align: 'center' }));
+      drawText(ctx, 'THEY GO ON THE GLOBAL BOARD', W / 2, 96, C.inkSoft, { align: 'center' });
+      for (let i = 0; i < 3; i++) {
+        const cx = 60 + i * 30;
+        rrect(cx - 12, 128, 24, 32, i === this.slot ? '#ffe3ee' : C.white, i === this.slot ? C.hot : '#e7a3c0');
+        drawText(ctx, this.letters[i], cx, 136, C.ink, { scale: 3, align: 'center' });
+        if (i === this.slot && Math.floor(clock.rt * 3) % 2) {
+          ctx.fillStyle = C.hot;
+          ctx.fillRect(cx - 7, 154, 14, 2);
+        }
+      }
+      if (this.error) drawText(ctx, this.error, W / 2, 181, '#d62a5a', { align: 'center' });
+      for (const b of this.buttons) b.draw(b === this.focusBtn);
+    }
+  }
+
+  // ------------------------------------------------------------- scores
+  class ScoresScene {
+    constructor(level, back) {
+      this.name = 'scores';
+      this.back = back || (() => new TitleScene());
+      this.level = level != null ? level : Math.max(0, Math.min(E.LEVELS.length - 1, save.unlocked - 1));
+      this.tab = level != null ? 'level' : 'overall';
+      this.state = 'loading';
+      this.rollT = clock.rt;
+      this.picker = null;
+      this.buttons = [
+        new Button(4, 4, 30, 17, '<', () => go(this.back()), { style: 'cream', scale: 2 }),
+        new Button(8, 28, 64, 17, 'OVERALL', () => this.setTab('overall'), { style: 'cream' }),
+        new Button(76, 28, 17, 17, '<', () => this.shift(-1), { style: 'sky' }),
+        new Button(95, 28, 58, 17, '', () => this.setTab('level'), { style: 'cream', icon: (cx, cy, st) => drawText(ctx, 'LEVEL ' + (this.level + 1), cx, cy - 2, st.text, { align: 'center', outline: st.outline }) }),
+        new Button(155, 28, 17, 17, '>', () => this.shift(1), { style: 'sky' }),
+        new Button(30, 262, 120, 18, '', () => this.editName(), { style: 'mint', icon: (cx, cy, st) => drawText(ctx, 'YOU ARE ' + save.name + ' - CHANGE', cx, cy - 2, st.text, { align: 'center' }) }),
+      ];
+      this.focusBtn = this.buttons[this.tab === 'overall' ? 1 : 3];
+      this.load();
+      this.refreshT = 0;
+    }
+    setTab(t) {
+      if (this.tab === t) return;
+      this.tab = t;
+      this.rollT = clock.rt;
+    }
+    shift(d) {
+      this.level = (this.level + d + E.LEVELS.length) % E.LEVELS.length;
+      this.tab = 'level';
+      this.load();
+    }
+    async load(force) {
+      const lv = this.level;
+      const cached = Board.levels[lv];
+      if (!force && cached && Date.now() - cached.at < 15000) {
+        this.state = 'ok';
+        this.rollT = clock.rt;
+        return;
+      }
+      this.state = 'loading';
+      const res = await Board.get(lv);
+      if (scene !== this || lv !== this.level) return;
+      this.state = res.state === 'done' ? 'ok' : res.state;
+      this.message = res.message;
+      this.rollT = clock.rt;
+    }
+    editName() {
+      this.picker = new InitialsPicker(save.name, (name) => {
+        setName(name);
+        this.picker = null;
+      }, () => { this.picker = null; }, 'PICK YOUR INITIALS');
+    }
+    rows() {
+      if (this.tab === 'overall') return Board.overall || [];
+      return (Board.levels[this.level] || {}).top || [];
+    }
+    update(dt) {
+      this.refreshT += dt;
+      if (this.refreshT > 60 && !this.picker) {
+        this.refreshT = 0;
+        this.load(true);
+      }
+    }
+    drawRow(r, i) {
+      const el = clock.rt - this.rollT - i * 0.05;
+      const slide = el < 0 ? 200 : el < 0.25 ? Math.round((1 - el / 0.25) * 170) : 0;
+      const y = 62 + i * 16, x = 11 + slide;
+      ctx.fillStyle = r.me ? '#ffd3e4' : ['#fff0b3', '#eceef6', '#f9e0cc'][r.rank - 1] || (i % 2 ? C.white : '#fff6fa');
+      ctx.fillRect(x, y, 158, 15);
+      drawText(ctx, String(r.rank), x + 11, y + 5, C.inkSoft, { align: 'right' });
+      if (r.rank === 1) blit(crownIcon(), x + 17, y + 3);
+      drawText(ctx, r.name, x + 22, y + 3, r.me ? C.hot : C.ink, { scale: 2 });
+      if (r.me) drawText(ctx, 'YOU', x + 56, y + 5, C.hot);
+      if (this.tab === 'overall') {
+        drawText(ctx, String(r.total), x + 154, y + 2, C.ink, { align: 'right' });
+        drawText(ctx, '★' + r.stars + ' ' + r.levels + ' LV', x + 154, y + 9, C.inkSoft, { align: 'right' });
+      } else {
+        drawText(ctx, String(r.score), x + 154, y + 2, C.ink, { align: 'right' });
+        for (let k = 0; k < 3; k++) blit(k < r.stars ? SPR.icons.starS : lazyIcon('starOff', ICONS.starS, { y: '#e9c7d6' }), x + 136 + k * 7, y + 11);
+      }
+    }
+    draw() {
+      drawSceneBg();
+      drawText(ctx, 'TOP KITTIES', W / 2 + 12, 8, C.white, { scale: 2, align: 'center', outline: C.ink });
+      this.buttons[1].style = this.tab === 'overall' ? 'pink' : 'cream';
+      this.buttons[3].style = this.tab === 'level' ? 'pink' : 'cream';
+      drawButtons(this);
+      rrect(8, 48, 164, 176, '#fff8fb', '#e7a3c0', { hi: C.white });
+      const head = this.tab === 'overall' ? 'BEST SCORES ADDED UP, ALL LEVELS' : 'LEVEL ' + (this.level + 1) + ': ' + E.LEVELS[this.level].name;
+      drawText(ctx, head, W / 2, 52, C.inkSoft, { align: 'center' });
+      const rows = this.rows();
+      const mid = (lines, col) => lines.forEach((ln, i) => drawText(ctx, ln, W / 2, 120 + i * 9, col || C.ink, { align: 'center' }));
+      if (!Board.enabled) mid(['THE LEADERBOARD IS', 'SWITCHED OFF HERE.']);
+      else if (!rows.length && this.state === 'loading') {
+        mid(['FETCHING THE TOP KITTIES...']);
+        blit(SPR.kitty[Math.floor(clock.rt * 2) % 6].happy, W / 2, 150 - Math.round(Math.abs(Math.sin(clock.rt * 6)) * 5));
+      } else if (!rows.length && (this.state === 'offline' || this.state === 'error')) {
+        mid(["CAN'T REACH THE BOARD.", 'CHECK YOUR CONNECTION,', 'THEN TAP HERE TO RETRY.'], C.hot);
+      } else if (!rows.length) {
+        mid(this.tab === 'overall' ? ['NO SCORES YET!', 'WIN A LEVEL AND BE THE', 'VERY FIRST TOP KITTY ♥'] : ['NO SCORES ON THIS LEVEL YET!', 'WIN IT TO BE FIRST ♥']);
+      } else rows.forEach((r, i) => this.drawRow(r, i));
+      const me = this.tab === 'overall' ? (Board.me || {}).overall : ((Board.levels[this.level] || {}).me || {}).level;
+      const line = me ? 'YOU ARE ' + ordinal(me.rank) + ' WITH ' + (me.total != null ? me.total : me.score) : 'WIN ' + (this.tab === 'overall' ? 'A LEVEL' : 'THIS LEVEL') + ' TO JOIN THE BOARD!';
+      drawText(ctx, line, W / 2, 232, me ? C.hot : C.inkSoft, { align: 'center' });
+      drawText(ctx, 'EVERY SCORE IS CHECKED BY REPLAYING', W / 2, 244, C.inkSoft, { align: 'center' });
+      drawText(ctx, 'THE GAME, SO NO CHEATY KITTIES!', W / 2, 251, C.inkSoft, { align: 'center' });
+      if (this.picker) this.picker.draw();
+    }
+    down(x, y) {
+      if (this.picker) return this.picker.down(x, y);
+      if (buttonsDown(this.buttons, x, y)) return;
+      if (y > 48 && y < 224 && !this.rows().length && (this.state === 'offline' || this.state === 'error')) this.load(true);
+    }
+    up(x, y) {
+      if (this.picker) return this.picker.up(x, y);
+      buttonsUp(this.buttons, x, y);
+    }
+    key(k) {
+      if (this.picker) return this.picker.key(k);
+      if (k === 'Escape') go(this.back());
+      else if (k === 'ArrowLeft' && this.tab === 'level') this.shift(-1);
+      else if (k === 'ArrowRight' && this.tab === 'level') this.shift(1);
+      else return keyNav(this, k);
+      return true;
+    }
+  }
+
+  function drawTicker(y) {
+    if (!Board.enabled) return;
+    const rows = Board.overall;
+    let text;
+    if (!rows) text = Board.status === 'offline' ? 'TOP KITTIES: OFFLINE RIGHT NOW ★' : 'TOP KITTIES: LOADING... ★';
+    else if (!rows.length) text = 'TOP KITTIES: NO SCORES YET. BE THE FIRST! ★';
+    else text = 'TOP KITTIES ★ ' + rows.map((r) => ordinal(r.rank) + ' ' + r.name + ' ' + r.total).join(' ★ ') + ' ★';
+    rrect(8, y, 164, 12, '#fff8fb', '#e7a3c0');
+    const w = textWidth(text) + 30;
+    const off = REDUCED ? 0 : Math.floor(clock.rt * 22) % w;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(10, y + 1, 160, 10);
+    ctx.clip();
+    for (let x = 12 - off; x < 172; x += w) drawText(ctx, text, x, y + 4, C.ink);
+    ctx.restore();
+  }
+
   // ============================================================ play: views
   const POP = 0.22;
   const CALLOUTS = ['NICE!', 'PURRFECT!', 'PAWSOME!', 'MEOWVELOUS!', 'FUR-TASTIC!', 'CLAW-SOME!!', 'PURR-FECTION!!'];
@@ -2326,6 +2765,29 @@
     return c;
   }
 
+  const COLOR_WORDS = ['PINK', 'ORANGE', 'YELLOW', 'MINT', 'BLUE', 'PURPLE'];
+  const goalLabel = (g) => ({
+    collect: () => 'COLLECT ' + COLOR_WORDS[g.color] + ' KITTIES',
+    hearts: () => 'POP HEARTS',
+    boxes: () => 'WAKE SLEEPY BOXES',
+    score: () => 'REACH SCORE',
+  })[g.type]();
+  const goalSentence = (g) => ({
+    collect: () => 'COLLECT ' + g.need + ' ' + COLOR_WORDS[g.color] + ' KITTIES',
+    hearts: () => 'POP ALL ' + g.need + ' HEARTS',
+    boxes: () => 'WAKE ' + g.need + ' SLEEPY ' + (g.need === 1 ? 'BOX' : 'BOXES'),
+    score: () => 'SCORE ' + g.need + ' POINTS',
+  })[g.type]();
+  const GOAL_HOW = {
+    collect: 'MATCH THEM! SPECIALS OF THAT COLOR COUNT TOO.',
+    hearts: 'MATCH ON TOP OF THE PINK HEART TILES. DARK HEARTS NEED TWO POPS.',
+    boxes: 'MATCH NEXT TO A BOX, OR BLAST IT. TAPED BOXES NEED TWO BOOPS.',
+    score: 'EVERY MATCH SCORES. SPECIALS AND COMBOS SCORE BIG!',
+  };
+  const goalTint = (g) => (g.type === 'collect' ? KITTIES[g.color].h : { hearts: '#ffd0e2', boxes: '#f6dcb8', score: '#fff0b3' }[g.type]);
+  const goalMini = (g) => (g.type === 'collect' ? SPR.icons['mini' + g.color] : { hearts: SPR.icons.heartS, boxes: SPR.icons.miniBox, score: SPR.icons.starS }[g.type]);
+  const goalBig = (g) => (g.type === 'collect' ? SPR.kitty[g.color].open : g.type === 'hearts' ? heartTileIcon() : g.type === 'boxes' ? SPR.box[1][0] : SPR.icons.star);
+
   const checkIcon = () => lazyIcon('check', ['.....kk', '....kk.', 'kk.kk..', '.kkk...', '..k....'], { k: '#2b9c6a' });
 
   // ============================================================= play scene
@@ -2335,7 +2797,11 @@
       this.index = index;
       this.cozy = index < 0;
       this.level = this.cozy ? E.COZY : E.LEVELS[index];
-      this.s = E.newGame(this.level, URL_SEED || (Math.random() * 2147483647) >>> 0);
+      this.ticket = this.cozy || URL_SEED ? null : Board.takeSeed(index);
+      this.seed = URL_SEED || (this.ticket ? this.ticket.seed : ((Math.random() * 2147483646) >>> 0) + 1);
+      this.s = E.newGame(this.level, this.seed);
+      this.log = [];
+      this.post = null;
       this.views = new Map();
       this.cells = Array.from({ length: 8 }, () => new Array(8).fill(null));
       this.hearts = this.s.hearts.map((r) => r.slice());
@@ -2363,6 +2829,15 @@
     }
 
     async enter() {
+      if (!this.ticket && !this.cozy && !URL_SEED && Board.enabled) {
+        await Promise.race([Board.refillSeeds(), sleep(1.5)]);
+        const t = Board.takeSeed(this.index);
+        if (t) {
+          this.ticket = t;
+          this.seed = t.seed;
+          this.s = E.newGame(this.level, this.seed);
+        }
+      }
       for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 8; c++) {
           const p = this.s.grid[r][c];
@@ -2383,7 +2858,15 @@
       }
       if (!this.cozy) await this.showBanner();
       await waitFor(() => [...this.views.values()].every((v) => !v.falling && v.delay <= 0));
-      this.say(this.cozy ? pickOne(LINES.cozy) : this.level.tip || pickOne(LINES.start), 5);
+      if (!this.ticket && !this.cozy && Board.enabled) {
+        this.say(URL_SEED ? "PRACTICE BOARD! THIS GAME WON'T GO ON THE LEADERBOARD." : "CAN'T REACH THE LEADERBOARD, SO THIS GAME WON'T BE RANKED.", 4);
+        at(4.2, () => this.say(this.level.tip || pickOne(LINES.start), 5));
+      } else this.say(this.cozy ? pickOne(LINES.cozy) : this.level.tip || pickOne(LINES.start), 5);
+      if (!this.cozy && !save.seen.goalTip) {
+        save.seen.goalTip = 1;
+        persist();
+        at(5.2, () => { if (!this.mascot.say) this.say('TAP THE GOALS UP TOP ANY TIME TO SEE WHAT TO DO!', 5); });
+      }
       this.busy = false;
     }
 
@@ -2392,7 +2875,7 @@
       this.cells[r][c] = v;
     }
     px(r, c) { return [BX + c * TILE + TILE / 2, BY + r * TILE + TILE / 2]; }
-    frozen() { return !!this.overlay && this.overlay.type === 'pause'; }
+    frozen() { return !!this.overlay && (this.overlay.type === 'pause' || this.overlay.type === 'goals'); }
 
     // ------------------------------------------------------------ mascot
     say(text, secs) {
@@ -2422,6 +2905,10 @@
     down(x, y) {
       if (this.overlay) return this.overlayDown(x, y);
       if (buttonsDown(this.buttons, x, y)) return;
+      if (!this.cozy && x >= 3 && x < 179 && y >= 27 && y < 69) {
+        this.showGoalInfo();
+        return;
+      }
       this.poke();
       const cell = this.cellAt(x, y);
       if (cell) this.tapCell(cell, x, y);
@@ -2481,6 +2968,10 @@
     }
     key(k) {
       if (this.overlay) return this.overlayKey(k);
+      if (k === '?' || k === 'g' || k === 'G') {
+        this.showGoalInfo();
+        return true;
+      }
       if (k === 'Escape') {
         if (this.selected) this.selected = null;
         else this.pause();
@@ -2522,6 +3013,7 @@
       this.drag = null;
       this.poke();
       const res = E.playMove(this.s, { type: 'swap', a, b });
+      if (res.ok) this.log.push([a[0], a[1], b[0], b[1]]);
       if (res.ok && E.status(this.s) === 'won') this.secureWin();
       Sound.sfx.swap();
       await this.animSwap(a, b, 0.15);
@@ -2559,6 +3051,7 @@
         this.busy = false;
         return;
       }
+      this.log.push([cell[0], cell[1]]);
       if (E.status(this.s) === 'won') this.secureWin();
       const v = this.cells[cell[0]][cell[1]];
       if (v) v.flash = 0.2;
@@ -2650,7 +3143,7 @@
       const slot = this.goalSlots && this.goalSlots.find((g) => g.type === type && (type !== 'collect' || g.color === color));
       if (!slot) return;
       const img = type === 'collect' ? SPR.icons['heart' + color] : type === 'hearts' ? SPR.icons.heartS : sparkSImg(C.gold);
-      emit({ x, y, sx: x, sy: y, tx: slot.x + 10, ty: slot.y + 10, max: 0.45 + Math.random() * 0.15, img });
+      emit({ x, y, sx: x, sy: y, tx: slot.x, ty: slot.y, max: 0.45 + Math.random() * 0.15, img });
     }
 
     transform(tr) {
@@ -2811,7 +3304,39 @@
       save.unlocked = Math.min(E.LEVELS.length, Math.max(save.unlocked, i + 2));
       persist();
       this.won = { party, steps, after, stars, newBest };
+      this.postScore();
       return this.won;
+    }
+
+    // Queue the winning game for the global board and post it straight away.
+    async postScore() {
+      if (this.cozy || !this.won || !Board.enabled) return;
+      const lv = this.index;
+      const score = this.won.after.score;
+      if (!this.ticket) {
+        this.post = { state: 'unranked', practice: !!URL_SEED };
+        return;
+      }
+      this.post = { state: 'posting' };
+      let res;
+      if (score > (save.posted[lv] || 0)) {
+        const prev = save.pending[lv];
+        if (!prev || prev.v !== ENGINE_V || prev.score < score) {
+          const t = this.ticket;
+          save.pending[lv] = { v: ENGINE_V, seed: t.seed, exp: t.exp, sig: t.sig, moves: this.log.slice(), score };
+          persist();
+        }
+        res = await Board.submit(lv);
+      } else {
+        res = await Board.get(lv);
+        if (res.data) res.data.improved = false;
+      }
+      this.post = res;
+      const me = res.data && res.data.me;
+      if (scene === this && res.data && res.data.improved && me && me.level && me.level.rank === 1) {
+        this.say("YOU'RE THE TOP KITTY ON THIS LEVEL!!", 4);
+        confetti(40);
+      }
     }
 
     async win() {
@@ -2893,11 +3418,25 @@
     showResult(won, stars, newBest) {
       const i = this.index;
       const last = i + 1 >= E.LEVELS.length;
+      if (won && Board.enabled && !save.named) {
+        this.overlay = {
+          type: 'initials',
+          t0: clock.rt,
+          buttons: [],
+          picker: new InitialsPicker(save.name, (name) => {
+            setName(name);
+            this.overlay = null;
+            this.showResult(won, stars, newBest);
+          }, null, 'YOU WON! PUT YOUR INITIALS ON THE BOARD'),
+        };
+        return;
+      }
       const buttons = won
         ? [
             new Button(45, 204, 90, 24, last ? 'YAY!' : 'NEXT', () => go(last ? new MapScene() : new PlayScene(i + 1)), { style: 'pink', scale: 2 }),
-            new Button(45, 232, 43, 18, 'REPLAY', () => go(new PlayScene(i)), { style: 'mint' }),
-            new Button(92, 232, 43, 18, 'LEVELS', () => go(new MapScene()), { style: 'sky' }),
+            new Button(20, 232, 44, 18, 'REPLAY', () => go(new PlayScene(i)), { style: 'mint' }),
+            new Button(68, 232, 44, 18, 'BOARD', () => go(new ScoresScene(i, () => new MapScene())), { style: 'gold' }),
+            new Button(116, 232, 44, 18, 'LEVELS', () => go(new MapScene()), { style: 'sky' }),
           ]
         : [
             new Button(45, 204, 90, 24, 'TRY AGAIN', () => go(new PlayScene(i)), { style: 'pink' }),
@@ -2910,26 +3449,35 @@
             if (!this.overlay || this.overlay.type !== 'result') return;
             this.overlay.shown = k + 1;
             Sound.sfx.star(k);
-            burst(W / 2 - 30 + k * 30, 104 - (k === 1 ? 5 : 0), 8, { img: sparkImg(C.gold), speed: 50, drag: 3, max: 0.6 });
+            burst(W / 2 - 30 + k * 30, 85 - (k === 1 ? 5 : 0), 8, { img: sparkImg(C.gold), speed: 50, drag: 3, max: 0.6 });
           });
         }
       }
     }
     overlayDown(x, y) {
       const o = this.overlay;
+      if (o.type === 'initials') return o.picker.down(x, y);
       if (o.type === 'banner') return o.done();
+      if (o.type === 'goals') {
+        this.overlay = null;
+        Sound.sfx.click();
+        return;
+      }
       buttonsDown(o.buttons, x, y);
     }
     overlayUp(x, y) {
-      if (this.overlay) buttonsUp(this.overlay.buttons, x, y);
+      const o = this.overlay;
+      if (o && o.type === 'initials') return o.picker.up(x, y);
+      if (o) buttonsUp(o.buttons, x, y);
     }
     overlayKey(k) {
       const o = this.overlay;
+      if (o.type === 'initials') return o.picker.key(k);
       if (o.type === 'banner') {
         o.done();
         return true;
       }
-      if (k === 'Escape' && o.type === 'pause') {
+      if (k === 'Escape' && (o.type === 'pause' || o.type === 'goals')) {
         this.overlay = null;
         return true;
       }
@@ -3244,57 +3792,90 @@
       panel(111, 46);
       drawText(ctx, 'SCORE', 134, 7, C.inkSoft, { align: 'center' });
       drawText(ctx, String(Math.floor(this.scoreShown)), 134, 18, C.ink, { align: 'center' });
-      rrect(3, 33, 174, 25, '#fff8fb', '#e7a3c0', { hi: C.white, shadow: '#f5c6d8' });
-      this.drawGoals(90, 35, true);
-      if (!this.cozy) {
+      rrect(3, 32, 174, 36, '#fff8fb', '#e7a3c0', { hi: C.white, shadow: '#f5c6d8' });
+      if (this.cozy) drawText(ctx, 'JUST RELAX AND MATCH! ♥', W / 2, 47, C.inkSoft, { align: 'center' });
+      else {
+        this.goalSlots = this.drawGoalRows(7, 33, 166, 34);
+        rrect(169, 28, 9, 9, C.hot, '#b83a6d');
+        drawText(ctx, '?', 174, 30, C.white, { align: 'center' });
         const st = this.level.stars, max = st[2];
         const k = Math.min(1, this.scoreShown / max);
-        rrect(4, 60, 172, 9, '#fff8fb', '#e7a3c0');
+        rrect(4, 70, 172, 9, '#fff8fb', '#e7a3c0');
         ctx.fillStyle = C.pink;
-        ctx.fillRect(7, 62, Math.round(166 * k), 5);
+        ctx.fillRect(7, 72, Math.round(166 * k), 5);
         ctx.fillStyle = '#ffd3e4';
-        ctx.fillRect(7, 62, Math.round(166 * k), 1);
+        ctx.fillRect(7, 72, Math.round(166 * k), 1);
         const off = lazyIcon('starOff', ICONS.starS, { y: '#e9c7d6' });
-        for (let i = 0; i < 3; i++) blit(this.scoreShown >= st[i] ? SPR.icons.starS : off, Math.min(170, 7 + Math.round(166 * (st[i] / max))), 64);
+        for (let i = 0; i < 3; i++) blit(this.scoreShown >= st[i] ? SPR.icons.starS : off, Math.min(170, 7 + Math.round(166 * (st[i] / max))), 74);
       }
     }
 
-    drawGoals(cx, y, record) {
-      if (this.cozy) {
-        drawText(ctx, 'JUST RELAX AND MATCH! ♥', cx, y + 8, C.inkSoft, { align: 'center' });
-        return;
-      }
-      const items = this.goals.map((g) => {
-        let left, img;
-        if (g.type === 'collect') {
-          left = Math.max(0, g.need - this.view.collected[g.color]);
-          img = SPR.kitty[g.color].open;
-        } else if (g.type === 'hearts') {
-          left = this.view.heartsLeft;
-          img = heartTileIcon();
-        } else if (g.type === 'boxes') {
-          left = Math.max(0, g.need - this.view.boxes);
-          img = SPR.box[1][0];
-        } else {
-          left = Math.max(0, g.need - this.view.score);
-          img = SPR.icons.star;
-        }
-        const text = g.type === 'score' ? String(g.need) : String(left);
-        const done = left <= 0;
-        return { g, img, text, done, w: 22 + (done ? 7 : textWidth(text)) };
+    goalItems() {
+      return this.goals.map((g) => {
+        const v = this.view;
+        const raw = g.type === 'collect' ? v.collected[g.color] : g.type === 'hearts' ? g.need - v.heartsLeft : g.type === 'boxes' ? v.boxes : v.score;
+        const have = Math.max(0, Math.min(g.need, raw));
+        return { g, have, done: have >= g.need };
       });
-      const gap = 7;
-      const total = items.reduce((a, it) => a + it.w, 0) + gap * (items.length - 1);
-      let x = Math.round(cx - total / 2);
+    }
+
+    // One labelled row per goal, filled like a progress bar, so the top of
+    // the screen doubles as the level's legend. Returns where each goal's
+    // icon sits, for kitties flying up to it.
+    drawGoalRows(x, y, w, h, sentence) {
+      const items = this.goalItems();
+      const rowH = 9, gap = 2;
+      let ry = Math.round(y + (h - (items.length * rowH + (items.length - 1) * gap)) / 2);
       const slots = [];
       for (const it of items) {
-        blit(it.img, x + 10, y + 10);
-        if (it.done) blit(checkIcon(), x + 25, y + 10);
-        else drawText(ctx, it.text, x + 22, y + 8, C.ink);
-        slots.push({ type: it.g.type, color: it.g.color, x, y });
-        x += it.w + gap;
+        const g = it.g;
+        rrect(x, ry, w, rowH, C.white, it.done ? '#5ccd9a' : '#e7a3c0');
+        if (!sentence) {
+          ctx.fillStyle = it.done ? '#c8f5dd' : goalTint(g);
+          const fw = Math.round((w - 2) * (it.have / g.need));
+          if (fw > 0) ctx.fillRect(x + 1, ry + 1, fw, rowH - 2);
+        }
+        blit(goalMini(g), x + 6, ry + 4);
+        drawText(ctx, sentence ? goalSentence(g) : goalLabel(g), x + 12, ry + 2, C.ink);
+        if (!sentence) {
+          if (it.done) blit(checkIcon(), x + w - 7, ry + 4);
+          else drawText(ctx, it.have + '/' + g.need, x + w - 3, ry + 2, C.ink, { align: 'right' });
+        }
+        slots.push({ type: g.type, color: g.color, x: x + 6, y: ry + 4 });
+        ry += rowH + gap;
       }
-      if (record) this.goalSlots = slots;
+      return slots;
+    }
+
+    showGoalInfo() {
+      if (this.overlay || this.cozy) return;
+      this.selected = null;
+      this.drag = null;
+      const blocks = this.goals.map((g) => ({ g, lines: wrap(goalSentence(g), 118).length + wrap(GOAL_HOW[g.type], 118).length }));
+      const h = 72 + blocks.reduce((a, b) => a + Math.max(26, b.lines * 8 + 14), 0);
+      const y0 = Math.max(8, Math.round(H / 2 - h / 2) - 10);
+      const done = () => { this.overlay = null; };
+      const buttons = [new Button(50, y0 + h - 28, 80, 20, 'GOT IT!', done, { style: 'pink' })];
+      this.overlay = { type: 'goals', t0: clock.rt, blocks, y0, h, buttons, focusBtn: buttons[0] };
+      Sound.sfx.click();
+    }
+
+    // Where this win landed on the global board.
+    drawRanks(y) {
+      if (!Board.enabled) return;
+      const p = this.post;
+      let lines = [];
+      let col = C.inkSoft;
+      if (!p || p.state === 'posting') lines = ['POSTING TO THE GLOBAL BOARD' + '...'.slice(0, 1 + (Math.floor(clock.rt * 3) % 3))];
+      else if (p.state === 'done' && p.data && p.data.me) {
+        const me = p.data.me;
+        if (me.level) lines.push((p.data.improved === false ? 'YOUR BEST HERE IS ' : 'GLOBAL RANK: ') + ordinal(me.level.rank) + ' ON THIS LEVEL');
+        if (me.overall) lines.push(ordinal(me.overall.rank) + ' OVERALL WITH ' + me.overall.total);
+        col = C.hot;
+      } else if (p.state === 'offline') lines = ["CAN'T REACH THE BOARD.", 'WE WILL POST IT LATER!'];
+      else if (p.state === 'unranked') lines = p.practice ? ['PRACTICE BOARD,', 'SO THIS ONE ISN\'T POSTED.'] : ['NO BOARD TICKET (OFFLINE?),', 'SO THIS ONE ISN\'T POSTED.'];
+      else if (p.state === 'error') lines = wrap(p.message || 'THAT SCORE COULD NOT BE POSTED.', 144).slice(0, 2);
+      lines.forEach((ln, i) => drawText(ctx, ln, W / 2, y + i * 9, col, { align: 'center' }));
     }
 
     drawMascot() {
@@ -3322,17 +3903,22 @@
     drawOverlay() {
       const o = this.overlay;
       const el = clock.rt - o.t0;
+      if (o.type === 'initials') {
+        o.picker.draw();
+        return;
+      }
       if (o.type === 'banner') {
         const slide = el < 0.25 ? (1 - el / 0.25) * -190 : el > 2.1 ? (el - 2.1) * 700 : 0;
         const x = Math.round(8 + slide);
-        rrect(x, 118, 164, 70, C.paper, '#c7799c', { hi: C.white, shadow: '#b0668a' });
-        ctx.save();
-        ctx.translate(x - 8, 0);
-        drawText(ctx, 'LEVEL ' + (this.index + 1), W / 2, 125, C.hot, { scale: 2, align: 'center', outline: C.white });
-        drawText(ctx, this.level.name, W / 2, 140, C.ink, { align: 'center' });
-        this.drawGoals(W / 2, 148, false);
-        drawText(ctx, this.level.moves + ' MOVES', W / 2, 176, C.inkSoft, { align: 'center' });
-        ctx.restore();
+        const n = this.goals.length;
+        const bh = 60 + n * 11;
+        const y0 = Math.round(BY + 80 - bh / 2);
+        rrect(x, y0, 164, bh, C.paper, '#c7799c', { hi: C.white, shadow: '#b0668a' });
+        drawText(ctx, 'LEVEL ' + (this.index + 1), x + 82, y0 + 7, C.hot, { scale: 2, align: 'center', outline: C.white });
+        drawText(ctx, this.level.name, x + 82, y0 + 22, C.ink, { align: 'center' });
+        drawText(ctx, 'YOUR GOALS:', x + 82, y0 + 31, C.inkSoft, { align: 'center' });
+        this.drawGoalRows(x + 6, y0 + 39, 152, n * 11 - 2, true);
+        drawText(ctx, 'IN ' + this.level.moves + ' MOVES', x + 82, y0 + bh - 12, C.hot, { align: 'center' });
         return;
       }
       ctx.globalAlpha = 0.45;
@@ -3354,6 +3940,24 @@
         for (const ln of wrap(info.how, 136)) { drawText(ctx, ln, W / 2, yy, C.ink, { align: 'center' }); yy += 8; }
         yy += 3;
         for (const ln of wrap(info.what, 136)) { drawText(ctx, ln, W / 2, yy, C.hot, { align: 'center' }); yy += 8; }
+      } else if (o.type === 'goals') {
+        rrect(8, o.y0, 164, o.h, C.paper, '#c7799c', { hi: C.white, shadow: '#b0668a' });
+        drawText(ctx, 'GOALS', W / 2, o.y0 + 7, C.hot, { scale: 2, align: 'center', outline: C.white });
+        drawText(ctx, 'LEVEL ' + (this.index + 1) + ': ' + this.level.name, W / 2, o.y0 + 23, C.inkSoft, { align: 'center' });
+        let yy = o.y0 + 34;
+        const items = this.goalItems();
+        o.blocks.forEach((b, i) => {
+          const it = items[i];
+          const bh = Math.max(26, b.lines * 8 + 14);
+          rrect(14, yy, 152, bh - 3, it.done ? '#e6fbef' : C.white, it.done ? '#5ccd9a' : '#e7a3c0');
+          blit(goalBig(b.g), 27, yy + 12);
+          let ty = yy + 4;
+          for (const ln of wrap(goalSentence(b.g), 118)) { drawText(ctx, ln, 42, ty, C.ink); ty += 8; }
+          for (const ln of wrap(GOAL_HOW[b.g.type], 118)) { drawText(ctx, ln, 42, ty, C.inkSoft); ty += 8; }
+          drawText(ctx, it.done ? 'DONE! ♥' : 'SO FAR: ' + it.have + '/' + b.g.need, 42, ty, it.done ? '#2b9c6a' : C.hot);
+          yy += bh;
+        });
+        drawText(ctx, this.view.moves + ' MOVES LEFT', W / 2, o.y0 + o.h - 38, C.ink, { align: 'center' });
       } else if (o.type === 'pause') {
         rrect(30, 70, 120, 146, C.paper, '#c7799c', { hi: C.white, shadow: '#b0668a' });
         drawText(ctx, 'PAUSED', W / 2, 80, C.ink, { scale: 2, align: 'center' });
@@ -3363,22 +3967,23 @@
         if (o.won) {
           drawText(ctx, o.last ? 'ALL CLEAR!' : 'LEVEL CLEAR!', W / 2, 60, C.hot, { scale: 2, align: 'center', outline: C.white, wave: REDUCED ? 0 : 1, t: clock.rt });
           for (let k = 0; k < 3; k++) {
-            const x = W / 2 - 30 + k * 30, y = 92 - (k === 1 ? 5 : 0);
+            const x = W / 2 - 30 + k * 30, y = 78 - (k === 1 ? 5 : 0);
             const img = k < o.shown ? SPR.icons.star : SPR.icons.starDim;
             ctx.drawImage(img, x - 9, y, 18, 14);
           }
-          drawText(ctx, 'SCORE', W / 2, 116, C.inkSoft, { align: 'center' });
-          drawText(ctx, String(this.s.score), W / 2, 124, C.ink, { scale: 2, align: 'center' });
-          if (o.newBest) drawText(ctx, 'NEW BEST!', W / 2, 138, C.hot, { align: 'center' });
-          ctx.drawImage(SPR.mascot[Math.floor(clock.rt * 2) % 2 ? 'happy' : 'open'], W / 2 - 20, 148, 40, 40);
-          drawText(ctx, o.last ? 'YOU BEAT ALL 20 LEVELS! ♥' : 'YOU ARE PAWSOME!', W / 2, 192, C.ink, { align: 'center' });
+          drawText(ctx, 'SCORE', W / 2, 98, C.inkSoft, { align: 'center' });
+          drawText(ctx, String(this.s.score), W / 2, 106, C.ink, { scale: 2, align: 'center' });
+          if (o.newBest) drawText(ctx, 'NEW BEST!', W / 2, 120, C.hot, { align: 'center' });
+          this.drawRanks(131);
+          ctx.drawImage(SPR.mascot[Math.floor(clock.rt * 2) % 2 ? 'happy' : 'open'], W / 2 - 20, 150, 40, 40);
+          if (o.last) drawText(ctx, 'YOU BEAT ALL 20 LEVELS! ♥', W / 2, 194, C.ink, { align: 'center' });
         } else {
           drawText(ctx, 'OUT OF MOVES', W / 2, 62, C.ink, { scale: 2, align: 'center' });
           ctx.drawImage(SPR.mascot.sad, W / 2 - 20, 80, 40, 40);
-          drawText(ctx, 'STILL TO GO:', W / 2, 128, C.inkSoft, { align: 'center' });
-          this.drawGoals(W / 2, 138, false);
-          drawText(ctx, 'SO CLOSE! TRY AGAIN?', W / 2, 172, C.hot, { align: 'center' });
-          drawText(ctx, 'SCORE ' + this.s.score, W / 2, 184, C.inkSoft, { align: 'center' });
+          drawText(ctx, 'STILL TO GO:', W / 2, 126, C.inkSoft, { align: 'center' });
+          this.drawGoalRows(20, 134, 140, 31);
+          drawText(ctx, 'SO CLOSE! TRY AGAIN?', W / 2, 176, C.hot, { align: 'center' });
+          drawText(ctx, 'SCORE ' + this.s.score, W / 2, 188, C.inkSoft, { align: 'center' });
         }
       }
       for (const b of o.buttons) b.draw(b === o.focusBtn);
@@ -3415,21 +4020,29 @@
   window.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     Sound.unlock();
-    if (e.key === 'm' || e.key === 'M') {
+    // The scene gets first go, so typing initials never toggles the music.
+    const handled = scene.key ? scene.key(e.key) : false;
+    if (handled !== false && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab', 'Backspace'].includes(e.key)) e.preventDefault();
+    if (handled !== true && (e.key === 'm' || e.key === 'M')) {
       save.music = !save.music;
       persist();
       if (!save.music) Sound.stopMusic();
       Sound.applyVolumes();
-      return;
     }
-    if (scene.key && scene.key(e.key) !== false && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab'].includes(e.key)) e.preventDefault();
   });
   window.addEventListener('resize', resize);
+  const reconnect = () => {
+    if (Board.enabled) Board.flush().then(() => Board.refillSeeds());
+  };
+  window.addEventListener('online', reconnect);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       Sound.suspend(true);
       if (scene.autoPause) scene.autoPause();
-    } else Sound.suspend(false);
+    } else {
+      Sound.suspend(false);
+      reconnect();
+    }
   });
 
   let last = performance.now();
@@ -3454,11 +4067,13 @@
   resize();
   go(new TitleScene());
   requestAnimationFrame(frame);
+  reconnect();
 
   // A small handle for tests and curious kitties.
   window.__purr = {
     E, go, clock, save, SPR, KITTIES, buildSprites, drawText, makeCanvas, paintKitty, buf,
-    scenes: { TitleScene, MapScene, HowToScene, PlayScene },
+    Board, ENGINE_V, setName,
+    scenes: { TitleScene, MapScene, HowToScene, PlayScene, ScoresScene },
     get scene() { return scene; },
   };
 

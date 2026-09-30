@@ -3,7 +3,7 @@ Meow
 
 🐙🐱 **[octokitti](OCTOKITTI.md)** — gitfiti, but the only palette is octocats. Fourteen kats, paintable onto your contribution graph. Try `python3 octokitti.py animate`.
 
-🐱✨ **[Purrfect Match 64](PURRFECT-MATCH.md)** — a super cute pixel-art kitty match-3 with zoomies, yarn balls, butterflies and rainbow kitties. [Play it](https://melscoop.github.io/octokat/purrfect-match/), or open `purrfect-match/index.html`.
+🐱✨ **[Purrfect Match 64](PURRFECT-MATCH.md)** — a super cute pixel-art kitty match-3 with zoomies, yarn balls, butterflies, rainbow kitties and a global leaderboard. [Play it](https://melscoop.github.io/octokat/purrfect-match/), or open `purrfect-match/index.html`.
 
                                                                                                                                                                                                         
                                                                                                                                                                                                         
